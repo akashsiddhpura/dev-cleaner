@@ -28,8 +28,26 @@ else
 fi
 
 # --- Global Variables ---
-SCRIPT_VERSION="1.1.0"
+SCRIPT_VERSION="1.2.0"
 GITHUB_REPO="https://github.com/jemishavasoya/dev-cleaner"
+
+# Check if FLUTTER_SEARCH_DIR is already set as environment variable
+if [ -z "${FLUTTER_SEARCH_DIR}" ]; then
+    FLUTTER_SEARCH_DIR="."  # Default search directory for Flutter cleanup
+    FLUTTER_DIR_SOURCE="default"
+else
+    # Expand ~ to home directory if present in environment variable
+    FLUTTER_SEARCH_DIR="${FLUTTER_SEARCH_DIR/#\~/$HOME}"
+    FLUTTER_DIR_SOURCE="environment"
+    
+    # Validate environment variable directory
+    if [ ! -d "$FLUTTER_SEARCH_DIR" ]; then
+        echo -e "${YELLOW}Warning: FLUTTER_SEARCH_DIR environment variable points to non-existent directory: ${FLUTTER_SEARCH_DIR}${NC}"
+        echo -e "${YELLOW}Falling back to current directory.${NC}"
+        FLUTTER_SEARCH_DIR="."
+        FLUTTER_DIR_SOURCE="default"
+    fi
+fi
 
 # Logo
 print_logo() {
@@ -129,6 +147,12 @@ cleanup_flutter() {
     if command -v flutter &> /dev/null; then
         print_item "✓" "${GREEN}" "Cleaning Flutter projects recursively from: $search_dir"
         
+        # Validate that the directory exists
+        if [ ! -d "$search_dir" ]; then
+            print_item "✕" "${RED}" "Directory not found: $search_dir"
+            return 1
+        fi
+        
         # Find all pubspec.yaml files recursively and clean each project
         local cleaned_count=0
         while IFS= read -r -d '' pubspec; do
@@ -179,7 +203,7 @@ cleanup_flutter() {
         if [ $cleaned_count -gt 0 ]; then
             print_item "✓" "${GREEN}" "Cleaned $cleaned_count Flutter project(s)"
         else
-            print_item "ℹ️" "${YELLOW}" "No Flutter projects found to clean"
+            print_item "ℹ️" "${YELLOW}" "No Flutter projects found to clean in: $search_dir"
         fi
         
         print_item "✓" "${GREEN}" "Cleaning Flutter global cache..."
@@ -397,7 +421,7 @@ display_menu() {
     echo -e "${GREEN} 1.${NC} Clear All Caches"
     echo -e "${GREEN} 2.${NC} Clear Xcode Caches & DerivedData"
     echo -e "${GREEN} 3.${NC} Clear Android/Gradle Caches"
-    echo -e "${GREEN} 4.${NC} Clear Flutter Caches"
+    echo -e "${GREEN} 4.${NC} Clear Flutter Caches ${FAINT}(with custom directory option)${NC}"
     echo -e "${GREEN} 5.${NC} Clear npm/Yarn/pnpm Caches"
     echo -e "${GREEN} 6.${NC} Clean Homebrew Caches"
     echo -e "${GREEN} 7.${NC} Clear CocoaPods Caches"
@@ -410,6 +434,33 @@ display_menu() {
     echo -e "${GREEN}14.${NC} Remove Time Machine Local Snapshots (requires sudo)"
     echo ""
     echo -e "→ Please enter your choice (0-14): ${NC}\c"
+}
+
+# --- Help function ---
+show_help() {
+    cat << EOF
+Dev Cleanup Utility v${SCRIPT_VERSION}
+A powerful cleanup utility for development environments on macOS
+
+Usage: $0 [OPTIONS]
+
+Options:
+  -h, --help              Show this help message
+  -v, --version           Show version information
+  --flutter-dir PATH      Set custom directory for Flutter cleanup (default: current directory)
+                          Example: $0 --flutter-dir ~/Projects
+
+Command-line Flutter cleanup:
+  You can specify a custom directory for Flutter cleanup using the --flutter-dir option.
+  This directory will be used when running the interactive menu or the "Clear All" option.
+
+Examples:
+  $0                                    # Run interactive menu (searches current directory for Flutter projects)
+  $0 --flutter-dir ~/Development        # Run with custom Flutter search directory
+  $0 --flutter-dir ~/Projects/Flutter   # Search only in specific Flutter projects folder
+
+Repository: ${GITHUB_REPO}
+EOF
 }
 
 # --- Main Logic ---
@@ -439,7 +490,7 @@ main_loop() {
                 cleanup_xcode
                 cleanup_android
                 cleanup_android_sdk
-                cleanup_flutter
+                cleanup_flutter "$FLUTTER_SEARCH_DIR"
                 cleanup_platformIO
                 cleanup_npm_yarn
                 cleanup_homebrew
@@ -460,7 +511,48 @@ main_loop() {
                 ;;
             4)
                 print_section_header "Performing Flutter Cleanup"
-                cleanup_flutter
+                echo -e "${CYAN}Current Flutter search directory: ${FLUTTER_SEARCH_DIR}${NC}"
+                case "$FLUTTER_DIR_SOURCE" in
+                    "environment")
+                        echo -e "${FAINT}  (from FLUTTER_SEARCH_DIR environment variable)${NC}"
+                        ;;
+                    "command-line")
+                        echo -e "${FAINT}  (from --flutter-dir command-line argument)${NC}"
+                        ;;
+                    "default")
+                        echo -e "${FAINT}  (default: current directory)${NC}"
+                        ;;
+                esac
+                echo ""
+                echo -e "${YELLOW}Enter a custom directory path, or press Enter to use current setting:${NC}"
+                read -r custom_flutter_dir
+                
+                # Use custom directory if provided, otherwise use global setting
+                if [ -n "$custom_flutter_dir" ]; then
+                    # Expand ~ to home directory
+                    custom_flutter_dir="${custom_flutter_dir/#\~/$HOME}"
+                    
+                    if [ -d "$custom_flutter_dir" ]; then
+                        echo -e "${CYAN}Using interactive override: ${custom_flutter_dir}${NC}"
+                        cleanup_flutter "$custom_flutter_dir"
+                    else
+                        print_item "✕" "${RED}" "Directory does not exist: $custom_flutter_dir"
+                        case "$FLUTTER_DIR_SOURCE" in
+                            "environment")
+                                echo -e "${YELLOW}Falling back to environment variable setting: ${FLUTTER_SEARCH_DIR}${NC}"
+                                ;;
+                            "command-line")
+                                echo -e "${YELLOW}Falling back to command-line argument: ${FLUTTER_SEARCH_DIR}${NC}"
+                                ;;
+                            "default")
+                                echo -e "${YELLOW}Falling back to default directory: ${FLUTTER_SEARCH_DIR}${NC}"
+                                ;;
+                        esac
+                        cleanup_flutter "$FLUTTER_SEARCH_DIR"
+                    fi
+                else
+                    cleanup_flutter "$FLUTTER_SEARCH_DIR"
+                fi
                 ;;
             5)
                 print_section_header "Performing npm/Yarn/pnpm Cleanup"
@@ -523,11 +615,43 @@ main_loop() {
 }
 
 # --- Handle command line arguments ---
-if [[ "$1" == "--version" || "$1" == "-v" ]]; then
-    echo "Dev Cleaner v${SCRIPT_VERSION}"
-    echo "A powerful cleanup utility for development environments"
-    echo "Repository: ${GITHUB_REPO}"
-    exit 0
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -v|--version)
+            echo "Dev Cleaner v${SCRIPT_VERSION}"
+            echo "A powerful cleanup utility for development environments"
+            echo "Repository: ${GITHUB_REPO}"
+            exit 0
+            ;;
+        --flutter-dir)
+            if [ -n "$2" ] && [ "${2:0:1}" != "-" ]; then
+                # Expand ~ to home directory
+                FLUTTER_SEARCH_DIR="${2/#\~/$HOME}"
+                FLUTTER_DIR_SOURCE="command-line"
+                shift 2
+            else
+                echo -e "${RED}Error: --flutter-dir requires a directory path${NC}"
+                echo "Use -h or --help for usage information"
+                exit 1
+            fi
+            ;;
+        *)
+            echo -e "${RED}Error: Unknown option: $1${NC}"
+            echo "Use -h or --help for usage information"
+            exit 1
+            ;;
+    esac
+done
+
+# Validate Flutter search directory if custom one was provided
+if [ "$FLUTTER_SEARCH_DIR" != "." ] && [ ! -d "$FLUTTER_SEARCH_DIR" ]; then
+    echo -e "${RED}Error: Flutter search directory does not exist: ${FLUTTER_SEARCH_DIR}${NC}"
+    echo "Please provide a valid directory path."
+    exit 1
 fi
 
 # --- Initial check for user confirmation before starting the interactive menu ---
@@ -536,6 +660,24 @@ echo -e "${RED}--- 🚀 Dev Cleanup Utility ---${NC}"
 echo "This script will permanently delete cache files from your system."
 echo "Review the options carefully before proceeding."
 echo ""
+
+# Report Flutter search directory and its source
+if [ "$FLUTTER_SEARCH_DIR" != "." ]; then
+    echo -e "${CYAN}Flutter search directory: ${FLUTTER_SEARCH_DIR}${NC}"
+    case "$FLUTTER_DIR_SOURCE" in
+        "environment")
+            echo -e "${FAINT}  (set via FLUTTER_SEARCH_DIR environment variable)${NC}"
+            ;;
+        "command-line")
+            echo -e "${FAINT}  (set via --flutter-dir command-line argument)${NC}"
+            ;;
+    esac
+    echo ""
+else
+    echo -e "${FAINT}Flutter search directory: current directory (default)${NC}"
+    echo ""
+fi
+
 echo -e "${YELLOW}⚠️ This action is IRREVERSIBLE for deleted files. ⚠️${NC}"
 echo -e "${YELLOW}Please CLOSE all development applications (Xcode, Android Studio, VSCode, etc.) before running.${NC}"
 echo ""
