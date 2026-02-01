@@ -13,15 +13,15 @@
   <img src="./images/poster_1.0.0.png" alt="poster_1.0.0" style="width:100%; height:auto; style="border-radius: 8px;"/><br>
 </p>
 
-## Support Latest macOS/Linux Dev Environments
+## Support Latest macOS/Linux/Windows Dev Environments
 
-This tool is for **educational purposes**, focusing on safely removing development-related junk files (Xcode, Flutter, npm, etc.) to free up disk space.
+This tool is for **educational purposes**, focusing on safely removing development-related junk files (Xcode, Flutter, Visual Studio, npm, etc.) to free up disk space.
 
 ---
 
 ### ✨ Features
 
-* **One-Click Cleanup:** Clear Xcode, Flutter, Gradle, npm, Homebrew, IDE, and browser caches.
+* **One-Click Cleanup:** Clear Xcode, Flutter, Visual Studio, Gradle, npm, NuGet, IDE, and browser caches.
 * **Comprehensive Flutter Cleanup:** Recursively finds and cleans all Flutter projects, removing:
   * FVM SDK caches and configurations (`.fvm`, `.fvmrc`)
   * Flutter build artifacts (`build`, `.dart_tool`, `.packages`, `pubspec.lock`)
@@ -29,7 +29,7 @@ This tool is for **educational purposes**, focusing on safely removing developme
   * iOS CocoaPods caches (`ios/Pods`, `ios/Podfile.lock`, `ios/.symlinks`, Flutter frameworks)
   * Global Flutter cache
 * **Interactive Menu:** Allows selection of specific cleanup targets (e.g., Xcode only).
-* **Multi-platform Support:** Supports **macOS** and **Linux** (shell script).
+* **Multi-platform Support:** Supports **macOS**, **Linux**, and **Windows**.
 
 ---
 
@@ -39,7 +39,7 @@ This tool is for **educational purposes**, focusing on safely removing developme
 | :--------------- | :----------- | :-------- |
 | macOS            | Intel, Apple Silicon | ✅        |
 | Linux            | x64, ARM64   | ✅        |
-| Windows          | N/A          | ❌ (PowerShell script pending) |
+| Windows          | x64, ARM64   | ✅        |
 
 ---
 
@@ -88,6 +88,67 @@ To uninstall:
 brew uninstall dev-cleaner
 brew untap jemishavasoya/dev-cleaner
 ```
+
+#### 🪟 Windows Installation
+
+**PowerShell (Run as Administrator)**
+
+##### One-Line Download & Run
+
+```powershell
+irm https://raw.githubusercontent.com/jemishavasoya/dev-cleaner/main/dev-cleaner.ps1 -OutFile dev-cleaner.ps1; .\dev-cleaner.ps1
+```
+
+> **Note:** You may need to set the execution policy first:
+> ```powershell
+> Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+> ```
+
+##### Manual Download
+
+1. Download `dev-cleaner.ps1` from this repository
+2. Right-click the file → **Run with PowerShell**, or
+3. Open PowerShell as Administrator and run:
+   ```powershell
+   .\dev-cleaner.ps1
+   ```
+
+##### Command-Line Options
+
+```powershell
+# Show help
+.\dev-cleaner.ps1 -Help
+
+# Show version
+.\dev-cleaner.ps1 -Version
+
+# Custom Flutter projects directory
+.\dev-cleaner.ps1 -FlutterDir "C:\Projects\Flutter"
+
+# Custom Visual Studio projects directory
+.\dev-cleaner.ps1 -VsDir "C:\Projects\DotNet"
+
+# Both custom directories
+.\dev-cleaner.ps1 -FlutterDir "D:\Flutter" -VsDir "D:\VisualStudio"
+```
+
+##### Environment Variables
+
+```powershell
+# Set in your PowerShell profile for persistence
+$env:FLUTTER_SEARCH_DIR = "C:\Projects\Flutter"
+$env:VS_SEARCH_DIR = "C:\Projects\DotNet"
+```
+
+##### Windows-Specific Cleanup
+
+The Windows version includes all cross-platform cleanups plus:
+
+- **Visual Studio:** Cleans `bin/`, `obj/`, `.vs/` folders from all .NET projects, plus global VS caches (ComponentModelCache, MEFCacheData)
+- **NuGet:** Clears global packages cache (`~/.nuget/packages`), HTTP cache, and temp files
+- **Windows Temp:** Clears user and system temp folders, plus Recycle Bin
+
+> **Note:** Some operations require Administrator privileges. The script will automatically request elevation if needed.
 
 #### 🧹 Flutter Cleanup Details
 
