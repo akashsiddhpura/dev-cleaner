@@ -30,6 +30,7 @@ fi
 # --- Global Variables ---
 SCRIPT_VERSION="1.2.0"
 GITHUB_REPO="https://github.com/jemishavasoya/dev-cleaner"
+DRY_RUN=false
 
 # Check if FLUTTER_SEARCH_DIR is already set as environment variable
 if [ -z "${FLUTTER_SEARCH_DIR}" ]; then
@@ -86,37 +87,146 @@ get_disk_space() {
     df -h . | awk 'NR==2 {print $4}'
 }
 
+# Dry-run aware file/directory removal
+# Usage: safe_rm [-r] <path> [<path> ...]
+safe_rm() {
+    local recursive=""
+    local paths=()
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -r|-rf|-fr)
+                recursive="-rf"
+                shift
+                ;;
+            *)
+                paths+=("$1")
+                shift
+                ;;
+        esac
+    done
+    
+    for path in "${paths[@]}"; do
+        # Expand globs and handle paths
+        local expanded_paths=()
+        # Use nullglob to handle non-matching patterns
+        shopt -s nullglob
+        if [[ "$path" == *\** || "$path" == *\?* ]]; then
+            expanded_paths=($path)
+        else
+            expanded_paths=("$path")
+        fi
+        shopt -u nullglob
+        
+        for expanded_path in "${expanded_paths[@]}"; do
+            if [[ -e "$expanded_path" ]]; then
+                if $DRY_RUN; then
+                    local size=""
+                    if [[ -d "$expanded_path" ]]; then
+                        size=$(du -sh "$expanded_path" 2>/dev/null | cut -f1)
+                        echo -e "${YELLOW}[DRY-RUN] Would delete directory: ${expanded_path} (${size:-unknown size})${NC}"
+                    else
+                        size=$(du -h "$expanded_path" 2>/dev/null | cut -f1)
+                        echo -e "${YELLOW}[DRY-RUN] Would delete file: ${expanded_path} (${size:-unknown size})${NC}"
+                    fi
+                else
+                    if [[ -n "$recursive" ]]; then
+                        rm -rf "$expanded_path"
+                    else
+                        rm -f "$expanded_path"
+                    fi
+                fi
+            fi
+        done
+    done
+}
+
+# Dry-run aware sudo file/directory removal
+# Usage: safe_sudo_rm [-r] <path> [<path> ...]
+safe_sudo_rm() {
+    local recursive=""
+    local paths=()
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -r|-rf|-fr)
+                recursive="-rf"
+                shift
+                ;;
+            *)
+                paths+=("$1")
+                shift
+                ;;
+        esac
+    done
+    
+    for path in "${paths[@]}"; do
+        # Expand globs and handle paths
+        local expanded_paths=()
+        shopt -s nullglob
+        if [[ "$path" == *\** || "$path" == *\?* ]]; then
+            expanded_paths=($path)
+        else
+            expanded_paths=("$path")
+        fi
+        shopt -u nullglob
+        
+        for expanded_path in "${expanded_paths[@]}"; do
+            if [[ -e "$expanded_path" ]] || sudo test -e "$expanded_path" 2>/dev/null; then
+                if $DRY_RUN; then
+                    local size=""
+                    if [[ -d "$expanded_path" ]] || sudo test -d "$expanded_path" 2>/dev/null; then
+                        size=$(sudo du -sh "$expanded_path" 2>/dev/null | cut -f1)
+                        echo -e "${YELLOW}[DRY-RUN] Would delete directory (sudo): ${expanded_path} (${size:-unknown size})${NC}"
+                    else
+                        size=$(sudo du -h "$expanded_path" 2>/dev/null | cut -f1)
+                        echo -e "${YELLOW}[DRY-RUN] Would delete file (sudo): ${expanded_path} (${size:-unknown size})${NC}"
+                    fi
+                else
+                    if [[ -n "$recursive" ]]; then
+                        sudo rm -rf "$expanded_path"
+                    else
+                        sudo rm -f "$expanded_path"
+                    fi
+                fi
+            fi
+        done
+    done
+}
+
 # --- Cleanup Functions ---
 cleanup_xcode() {
     print_item "✓" "${GREEN}" "Clearing Xcode DerivedData..."
-    rm -rf ~/Library/Developer/Xcode/DerivedData/
+    safe_rm -rf ~/Library/Developer/Xcode/DerivedData/
     print_item "✓" "${GREEN}" "Removing old Simulator devices..."
-    rm -rf ~/Library/Developer/CoreSimulator/Devices/
+    safe_rm -rf ~/Library/Developer/CoreSimulator/Devices/
     print_item "✓" "${GREEN}" "Removing old device support files..."
-    rm -rf ~/Library/Developer/Xcode/iOS\ DeviceSupport/
+    safe_rm -rf ~/Library/Developer/Xcode/iOS\ DeviceSupport/
     print_item "✓" "${GREEN}" "Removing Xcode caches..."
-    rm -rf ~/Library/Caches/com.apple.dt.Xcode/
+    safe_rm -rf ~/Library/Caches/com.apple.dt.Xcode/
     print_item "✓" "${GREEN}" "Removing Xcode Archives..."
-    rm -rf ~/Library/Developer/Xcode/Archives/
+    safe_rm -rf ~/Library/Developer/Xcode/Archives/
     print_item "✓" "${GREEN}" "Removing Xcode build Products..."
-    rm -rf ~/Library/Developer/Xcode/Products/
+    safe_rm -rf ~/Library/Developer/Xcode/Products/
     print_item "✓" "${GREEN}" "Removing Xcode DocumentationCache..."
-    rm -rf ~/Library/Developer/Xcode/DocumentationCache/
+    safe_rm -rf ~/Library/Developer/Xcode/DocumentationCache/
     print_item "✓" "${GREEN}" "Cleaning CoreDevice cache..."
-    rm -rf ~/Library/Containers/com.apple.CoreDevice.CoreDeviceService/Data/Library/Caches/*
+    safe_rm -rf ~/Library/Containers/com.apple.CoreDevice.CoreDeviceService/Data/Library/Caches/*
 }
 
 cleanup_android() {
     if [ -d "$HOME/.gradle" ]; then
         print_item "✓" "${GREEN}" "Cleaning Gradle caches..."
-        rm -rf ~/.gradle/caches/
-        rm -rf ~/.gradle/daemon/
+        safe_rm -rf ~/.gradle/caches/
+        safe_rm -rf ~/.gradle/daemon/
     else
         print_item "✕" "${YELLOW}" "Gradle directory not found. Skipping."
     fi
     print_item "✓" "${GREEN}" "Cleaning Android Studio caches..."
-    rm -rf ~/Library/Caches/Google/AndroidStudio*
-    rm -rf ~/Library/Caches/JetBrains/AndroidStudio*
+    safe_rm -rf ~/Library/Caches/Google/AndroidStudio*
+    safe_rm -rf ~/Library/Caches/JetBrains/AndroidStudio*
 }
 
 cleanup_android_sdk() {
@@ -125,16 +235,28 @@ cleanup_android_sdk() {
         # Keep only latest 2 versions of build-tools
         if [ -d "$HOME/Library/Android/sdk/build-tools" ]; then
             cd "$HOME/Library/Android/sdk/build-tools" 2>/dev/null || return
-            ls -t | tail -n +3 | xargs -I {} rm -rf {}
+            if $DRY_RUN; then
+                ls -t | tail -n +3 | while read -r dir; do
+                    echo -e "${YELLOW}[DRY-RUN] Would delete: $HOME/Library/Android/sdk/build-tools/$dir${NC}"
+                done
+            else
+                ls -t | tail -n +3 | xargs -I {} rm -rf {}
+            fi
         fi
 
         print_item "✓" "${GREEN}" "Cleaning old Android platform-tools..."
-        rm -rf ~/Library/Android/sdk/.temp 2>/dev/null || true
+        safe_rm -rf ~/Library/Android/sdk/.temp
 
         # For Apple Silicon Macs, remove x86 emulator images if they exist
         if [ "$(uname -m)" = "arm64" ]; then
             print_item "✓" "${GREEN}" "Removing x86 emulator images (ARM Mac detected)..."
-            find ~/Library/Android/sdk/system-images -type d -name "x86" -exec rm -rf {} + 2>/dev/null || true
+            if $DRY_RUN; then
+                find ~/Library/Android/sdk/system-images -type d -name "x86" 2>/dev/null | while read -r dir; do
+                    echo -e "${YELLOW}[DRY-RUN] Would delete: $dir${NC}"
+                done
+            else
+                find ~/Library/Android/sdk/system-images -type d -name "x86" -exec rm -rf {} + 2>/dev/null || true
+            fi
         fi
     else
         print_item "✕" "${YELLOW}" "Android SDK not found. Skipping."
@@ -447,6 +569,7 @@ Usage: $0 [OPTIONS]
 Options:
   -h, --help              Show this help message
   -v, --version           Show version information
+  --dry-run               Show what would be deleted without actually removing files
   --flutter-dir PATH      Set custom directory for Flutter cleanup (default: current directory)
                           Example: $0 --flutter-dir ~/Projects
 
@@ -456,6 +579,7 @@ Command-line Flutter cleanup:
 
 Examples:
   $0                                    # Run interactive menu (searches current directory for Flutter projects)
+  $0 --dry-run                          # Preview what would be deleted without removing anything
   $0 --flutter-dir ~/Development        # Run with custom Flutter search directory
   $0 --flutter-dir ~/Projects/Flutter   # Search only in specific Flutter projects folder
 
@@ -602,9 +726,14 @@ main_loop() {
 
         local final_free_space=$(get_disk_space)
         echo ""
-        echo -e "${GREEN}✅ Cleanup task(s) completed!${NC}"
-        echo -e "${BLUE}Disk space before: ${initial_free_space}${NC}"
-        echo -e "${BLUE}Disk space after:  ${final_free_space}${NC}"
+        if $DRY_RUN; then
+            echo -e "${CYAN}🔍 Dry-run analysis completed!${NC}"
+            echo -e "${CYAN}No files were deleted. Run without --dry-run to perform actual cleanup.${NC}"
+        else
+            echo -e "${GREEN}✅ Cleanup task(s) completed!${NC}"
+            echo -e "${BLUE}Disk space before: ${initial_free_space}${NC}"
+            echo -e "${BLUE}Disk space after:  ${final_free_space}${NC}"
+        fi
         echo ""
         read -p "Press Enter to return to the menu..."
     done
@@ -626,6 +755,10 @@ while [[ $# -gt 0 ]]; do
             echo "A powerful cleanup utility for development environments"
             echo "Repository: ${GITHUB_REPO}"
             exit 0
+            ;;
+        --dry-run)
+            DRY_RUN=true
+            shift
             ;;
         --flutter-dir)
             if [ -n "$2" ] && [ "${2:0:1}" != "-" ]; then
@@ -657,8 +790,13 @@ fi
 # --- Initial check for user confirmation before starting the interactive menu ---
 clear
 echo -e "${RED}--- 🚀 Dev Cleanup Utility ---${NC}"
-echo "This script will permanently delete cache files from your system."
-echo "Review the options carefully before proceeding."
+if $DRY_RUN; then
+    echo -e "${CYAN}${BOLD}🔍 DRY-RUN MODE ENABLED${NC}"
+    echo -e "${CYAN}This will show what would be deleted without actually removing any files.${NC}"
+else
+    echo "This script will permanently delete cache files from your system."
+    echo "Review the options carefully before proceeding."
+fi
 echo ""
 
 # Report Flutter search directory and its source
@@ -678,10 +816,16 @@ else
     echo ""
 fi
 
-echo -e "${YELLOW}⚠️ This action is IRREVERSIBLE for deleted files. ⚠️${NC}"
-echo -e "${YELLOW}Please CLOSE all development applications (Xcode, Android Studio, VSCode, etc.) before running.${NC}"
-echo ""
-read -p "Are you sure you want to start the cleanup utility? (y/N): " initial_confirm
+if $DRY_RUN; then
+    echo -e "${GREEN}✓ Safe to run: No files will be modified in dry-run mode.${NC}"
+    echo ""
+    read -p "Start dry-run analysis? (y/N): " initial_confirm
+else
+    echo -e "${YELLOW}⚠️ This action is IRREVERSIBLE for deleted files. ⚠️${NC}"
+    echo -e "${YELLOW}Please CLOSE all development applications (Xcode, Android Studio, VSCode, etc.) before running.${NC}"
+    echo ""
+    read -p "Are you sure you want to start the cleanup utility? (y/N): " initial_confirm
+fi
 if [[ "$initial_confirm" != "y" && "$initial_confirm" != "Y" ]]; then
     echo "Cleanup utility cancelled."
     exit 0
