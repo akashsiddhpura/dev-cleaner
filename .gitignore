@@ -1,0 +1,12 @@
+# Claude Code
+.claude/
+
+# Documentation plans (internal)
+docs/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+desktop.ini
