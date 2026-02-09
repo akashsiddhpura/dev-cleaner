@@ -1,0 +1,34 @@
+# dev-cleaner
+> One-click interactive shell script to safely clean and optimize development caches (Xcode, Flutter, Android, npm, IDEs) on macOS and Linux.
+
+## Metadata
+- **Author:** Jemish Avasoya
+- **Repo:** https://github.com/jemishavasoya/dev-cleaner
+- **License:** MIT
+- **Platforms:** macOS (Intel/Silicon), Linux (x64/ARM)
+
+## Core Features
+- **One-Click Cleanup:** Clears caches for Xcode, Flutter, Gradle, npm, Homebrew, and browsers.
+- **Deep Flutter Integration:** Recursive search for `pubspec.yaml` to clean `build/`, `.dart_tool/`, and FVM caches.
+- **Mobile Dev Focused:** Specifically targets iOS (CocoaPods/DerivedData) and Android (Gradle/Build artifacts).
+- **Interactive:** Provides a menu to select specific cleanup targets.
+
+## Installation & Usage
+
+### One-liner (Fastest)
+curl -fsSL https://raw.githubusercontent.com/jemishavasoya/dev-cleaner/main/dev-cleaner.sh -o dev-cleanup.sh && chmod +x dev-cleanup.sh && ./dev-cleanup.sh
+
+### Homebrew (Recommended for macOS)
+brew tap jemishavasoya/dev-cleaner
+brew install dev-cleaner
+dev-cleaner
+
+## Technical Details
+- **Scripting Language:** Bash / Shell (68.4%)
+- **Safety:** Focuses on non-source files and temporary caches.
+- **Recursive Logic:** Option 4 performs a deep scan of the current directory to find all Flutter-related projects.
+
+## Common Use Cases
+- Recovering 50GB+ of "System Data" on limited Mac SSDs.
+- Fixing "Out of Disk Space" errors during Flutter/Android builds.
+- Resetting development environments by clearing stale build artifacts.
