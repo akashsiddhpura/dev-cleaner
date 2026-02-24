@@ -28,7 +28,7 @@ else
 fi
 
 # --- Global Variables ---
-SCRIPT_VERSION="1.2.0"
+SCRIPT_VERSION="1.3.0"
 GITHUB_REPO="https://github.com/jemishavasoya/dev-cleaner"
 DRY_RUN=false
 
@@ -85,6 +85,39 @@ print_item() {
 
 get_disk_space() {
     df -h . | awk 'NR==2 {print $4}'
+}
+
+get_disk_space_bytes() {
+    df -k . | awk 'NR==2 {print $4}'
+}
+
+format_freed_space() {
+    local kb_diff=$1
+    if [ "$kb_diff" -le 0 ] 2>/dev/null; then
+        echo "0 KB"
+    elif [ "$kb_diff" -ge 1048576 ]; then
+        echo "$(( kb_diff / 1048576 )) GB"
+    elif [ "$kb_diff" -ge 1024 ]; then
+        echo "$(( kb_diff / 1024 )) MB"
+    else
+        echo "${kb_diff} KB"
+    fi
+}
+
+run_with_space_tracking() {
+    local label="$1"
+    shift
+    local before
+    before=$(get_disk_space_bytes)
+    "$@"
+    local after
+    after=$(get_disk_space_bytes)
+    local freed=$(( after - before ))
+    if [ "$freed" -gt 0 ] 2>/dev/null; then
+        local formatted
+        formatted=$(format_freed_space "$freed")
+        echo -e "${MAGENTA}    ↳ Freed: ${formatted}${NC}"
+    fi
 }
 
 # Dry-run aware file/directory removal
@@ -234,14 +267,16 @@ cleanup_android_sdk() {
         print_item "✓" "${GREEN}" "Cleaning old Android SDK build-tools (keeping latest 2 versions)..."
         # Keep only latest 2 versions of build-tools
         if [ -d "$HOME/Library/Android/sdk/build-tools" ]; then
-            cd "$HOME/Library/Android/sdk/build-tools" 2>/dev/null || return
-            if $DRY_RUN; then
-                ls -t | tail -n +3 | while read -r dir; do
-                    echo -e "${YELLOW}[DRY-RUN] Would delete: $HOME/Library/Android/sdk/build-tools/$dir${NC}"
-                done
-            else
-                ls -t | tail -n +3 | xargs -I {} rm -rf {}
-            fi
+            (
+                cd "$HOME/Library/Android/sdk/build-tools" 2>/dev/null || exit 1
+                if $DRY_RUN; then
+                    ls -t | tail -n +3 | while read -r dir; do
+                        echo -e "${YELLOW}[DRY-RUN] Would delete: $HOME/Library/Android/sdk/build-tools/$dir${NC}"
+                    done
+                else
+                    ls -t | tail -n +3 | xargs -I {} rm -rf {}
+                fi
+            )
         fi
 
         print_item "✓" "${GREEN}" "Cleaning old Android platform-tools..."
@@ -277,6 +312,8 @@ cleanup_flutter() {
         
         # Find all pubspec.yaml files recursively and clean each project
         local cleaned_count=0
+        local original_dir
+        original_dir=$(pwd)
         while IFS= read -r -d '' pubspec; do
             project_dir=$(cd "$(dirname "$pubspec")" 2>/dev/null && pwd)
             if [ -z "$project_dir" ]; then
@@ -299,27 +336,30 @@ cleanup_flutter() {
             # --- 2. Remove FVM configs ---
             if [ -d ".fvm" ] || [ -f ".fvmrc" ]; then
                 echo -e "${FAINT}    🔥 Removing FVM folders...${NC}"
-                rm -rf .fvm .fvmrc 2>/dev/null || true
+                safe_rm -rf .fvm .fvmrc
             fi
             
             # --- 3. Clean Flutter build & cache dirs ---
             echo -e "${FAINT}    🔥 Removing Flutter build and Pub Dev caches...${NC}"
-            rm -rf build .dart_tool .packages pubspec.lock 2>/dev/null || true
+            safe_rm -rf build .dart_tool .packages pubspec.lock
             
             # --- 4. Clean Gradle caches ---
             if [ -d "android" ]; then
                 echo -e "${FAINT}    🔥 Removing Gradle caches...${NC}"
-                rm -rf android/.gradle android/build android/app/build 2>/dev/null || true
+                safe_rm -rf android/.gradle android/build android/app/build
             fi
             
             # --- 5. Clean CocoaPods (iOS) ---
             if [ -d "ios" ]; then
                 echo -e "${FAINT}    🔥 Removing CocoaPods caches...${NC}"
-                rm -rf ios/Pods ios/Podfile.lock ios/.symlinks ios/Flutter/Flutter.framework ios/Flutter/Flutter.podspec 2>/dev/null || true
+                safe_rm -rf ios/Pods ios/Podfile.lock ios/.symlinks ios/Flutter/Flutter.framework ios/Flutter/Flutter.podspec
             fi
             
             cleaned_count=$((cleaned_count + 1))
             echo -e "${GREEN}  ✅ Cleaned $project_dir${NC}"
+            
+            # Restore original directory
+            cd "$original_dir" 2>/dev/null || true
         done < <(find "$search_dir" -type f -name "pubspec.yaml" -print0 2>/dev/null)
         
         if [ $cleaned_count -gt 0 ]; then
@@ -393,8 +433,8 @@ cleanup_homebrew() {
 cleanup_cocoapods() {
     if [ -d "$HOME/.cocoapods" ]; then
         print_item "✓" "${GREEN}" "Cleaning CocoaPods cache..."
-        rm -rf ~/.cocoapods/repos/
-        rm -rf ~/Library/Caches/CocoaPods/
+        safe_rm -rf ~/.cocoapods/repos/
+        safe_rm -rf ~/Library/Caches/CocoaPods/
     else
         print_item "✕" "${YELLOW}" "CocoaPods not found. Skipping."
     fi
@@ -402,69 +442,77 @@ cleanup_cocoapods() {
 
 cleanup_ide_caches() {
     print_item "✓" "${GREEN}" "Cleaning general JetBrains IDE caches..."
-    rm -rf ~/Library/Caches/JetBrains/
+    safe_rm -rf ~/Library/Caches/JetBrains/
     print_item "✓" "${GREEN}" "Cleaning VSCode cache..."
-    rm -rf ~/Library/Application\ Support/Code/Cache/
-    rm -rf ~/Library/Application\ Support/Code/CachedData/
-    rm -rf ~/Library/Application\ Support/Code/User/workspaceStorage/
+    safe_rm -rf ~/Library/Application\ Support/Code/Cache/
+    safe_rm -rf ~/Library/Application\ Support/Code/CachedData/
+    safe_rm -rf ~/Library/Application\ Support/Code/User/workspaceStorage/
 }
 
 cleanup_system_junk() {
     print_item "✓" "${GREEN}" "Emptying the Trash..."
-    sudo rm -rf ~/.Trash/*
-    sudo rm -rf /Volumes/*/.Trashes/*
-    print_item "✓" "${GREEN}" "Cleaning system-level library caches..."
-    sudo rm -rf /Library/Caches/*
+    safe_sudo_rm -rf ~/.Trash/*
+    safe_sudo_rm -rf /Volumes/*/.Trashes/*
     print_item "✓" "${GREEN}" "Cleaning user-level log files..."
-    rm -rf ~/Library/Logs/*
-    print_item "✓" "${GREEN}" "Cleaning system-level log files..."
-    sudo rm -rf /private/var/log/*
-    sudo rm -rf /Library/Logs/*
+    safe_rm -rf ~/Library/Logs/*
+    print_item "✓" "${GREEN}" "Cleaning old/rotated system log files..."
+    # Only remove rotated/compressed logs, not active ones
+    if $DRY_RUN; then
+        find /private/var/log -name "*.gz" -o -name "*.bz2" -o -name "*.old" 2>/dev/null | while read -r f; do
+            echo -e "${YELLOW}[DRY-RUN] Would delete: $f${NC}"
+        done
+        find /Library/Logs -name "*.gz" -o -name "*.bz2" -o -name "*.old" 2>/dev/null | while read -r f; do
+            echo -e "${YELLOW}[DRY-RUN] Would delete: $f${NC}"
+        done
+    else
+        sudo find /private/var/log -name "*.gz" -o -name "*.bz2" -o -name "*.old" -exec rm -f {} + 2>/dev/null || true
+        sudo find /Library/Logs -name "*.gz" -o -name "*.bz2" -o -name "*.old" -exec rm -f {} + 2>/dev/null || true
+    fi
 }
 
 cleanup_browser_caches() {
     if [ -d "$HOME/Library/Caches/Google/Chrome" ]; then
         print_item "✓" "${GREEN}" "Cleaning Chrome cache..."
-        rm -rf ~/Library/Caches/Google/Chrome/*
+        safe_rm -rf ~/Library/Caches/Google/Chrome/*
     else
         print_item "✕" "${YELLOW}" "Chrome cache not found. Skipping."
     fi
     if [ -d "$HOME/Library/Caches/BraveSoftware/Brave-Browser" ]; then
         print_item "✓" "${GREEN}" "Cleaning Brave cache..."
-        rm -rf ~/Library/Caches/BraveSoftware/Brave-Browser/*
+        safe_rm -rf ~/Library/Caches/BraveSoftware/Brave-Browser/*
     else
         print_item "✕" "${YELLOW}" "Brave cache not found. Skipping."
     fi
     if [ -d "$HOME/Library/Caches/Firefox" ]; then
         print_item "✓" "${GREEN}" "Cleaning Firefox cache..."
-        rm -rf ~/Library/Caches/Firefox/*
+        safe_rm -rf ~/Library/Caches/Firefox/*
     else
         print_item "✕" "${YELLOW}" "Firefox cache not found. Skipping."
     fi
     if [ -d "$HOME/Library/Caches/com.apple.Safari" ]; then
         print_item "✓" "${GREEN}" "Cleaning Safari cache..."
-        rm -rf ~/Library/Caches/com.apple.Safari/*
+        safe_rm -rf ~/Library/Caches/com.apple.Safari/*
     else
         print_item "✕" "${YELLOW}" "Safari cache not found. Skipping."
     fi
     if [ -d "$HOME/Library/Caches/Microsoft Edge" ]; then
         print_item "✓" "${GREEN}" "Cleaning Microsoft Edge cache..."
-        rm -rf ~/Library/Caches/Microsoft\ Edge/*
+        safe_rm -rf ~/Library/Caches/Microsoft\ Edge/*
     elif [ -d "$HOME/Library/Caches/com.microsoft.edgemac" ]; then
         print_item "✓" "${GREEN}" "Cleaning Microsoft Edge cache..."
-        rm -rf ~/Library/Caches/com.microsoft.edgemac/*
+        safe_rm -rf ~/Library/Caches/com.microsoft.edgemac/*
     else
         print_item "✕" "${YELLOW}" "Microsoft Edge cache not found. Skipping."
     fi
     if [ -d "$HOME/Library/Caches/com.operasoftware.Opera" ]; then
         print_item "✓" "${GREEN}" "Cleaning Opera cache..."
-        rm -rf ~/Library/Caches/com.operasoftware.Opera/*
+        safe_rm -rf ~/Library/Caches/com.operasoftware.Opera/*
     else
         print_item "✕" "${YELLOW}" "Opera cache not found. Skipping."
     fi
     if [ -d "$HOME/Library/Caches/com.operasoftware.OperaGX" ]; then
         print_item "✓" "${GREEN}" "Cleaning Opera GX cache..."
-        rm -rf ~/Library/Caches/com.operasoftware.OperaGX/*
+        safe_rm -rf ~/Library/Caches/com.operasoftware.OperaGX/*
     fi
 }
 
@@ -474,36 +522,121 @@ cleanup_app_containers() {
     # Slack
     if [ -d "$HOME/Library/Containers/com.tinyspeck.slackmacgap" ]; then
         print_item "✓" "${GREEN}" "Cleaning Slack cache..."
-        rm -rf ~/Library/Containers/com.tinyspeck.slackmacgap/Data/Library/Caches/* 2>/dev/null || true
+        safe_rm -rf ~/Library/Containers/com.tinyspeck.slackmacgap/Data/Library/Caches/*
     fi
 
     # Microsoft Teams
     if [ -d "$HOME/Library/Containers/com.microsoft.teams2" ]; then
         print_item "✓" "${GREEN}" "Cleaning Microsoft Teams cache..."
-        rm -rf ~/Library/Containers/com.microsoft.teams2/Data/Library/Caches/* 2>/dev/null || true
+        safe_rm -rf ~/Library/Containers/com.microsoft.teams2/Data/Library/Caches/*
     fi
 
     # WhatsApp
     if [ -d "$HOME/Library/Containers/net.whatsapp.WhatsApp" ]; then
         print_item "✓" "${GREEN}" "Cleaning WhatsApp cache..."
-        rm -rf ~/Library/Containers/net.whatsapp.WhatsApp/Data/Library/Caches/* 2>/dev/null || true
+        safe_rm -rf ~/Library/Containers/net.whatsapp.WhatsApp/Data/Library/Caches/*
     fi
 
     # Discord
     if [ -d "$HOME/Library/Application Support/discord" ]; then
         print_item "✓" "${GREEN}" "Cleaning Discord cache..."
-        rm -rf ~/Library/Application\ Support/discord/Cache/* 2>/dev/null || true
-        rm -rf ~/Library/Application\ Support/discord/Code\ Cache/* 2>/dev/null || true
+        safe_rm -rf ~/Library/Application\ Support/discord/Cache/*
+        safe_rm -rf ~/Library/Application\ Support/discord/Code\ Cache/*
     fi
 
     # Spotify
     if [ -d "$HOME/Library/Caches/com.spotify.client" ]; then
         print_item "✓" "${GREEN}" "Cleaning Spotify cache..."
-        rm -rf ~/Library/Caches/com.spotify.client/* 2>/dev/null || true
+        safe_rm -rf ~/Library/Caches/com.spotify.client/*
     fi
     if [ -d "$HOME/Library/Application Support/Spotify/PersistentCache" ]; then
-        rm -rf ~/Library/Application\ Support/Spotify/PersistentCache/* 2>/dev/null || true
+        safe_rm -rf ~/Library/Application\ Support/Spotify/PersistentCache/*
     fi
+}
+
+cleanup_docker() {
+    if command -v docker &> /dev/null; then
+        print_item "✓" "${GREEN}" "Cleaning Docker system..."
+        if $DRY_RUN; then
+            echo -e "${YELLOW}[DRY-RUN] Would run: docker system prune -f${NC}"
+            echo -e "${YELLOW}[DRY-RUN] Would run: docker builder prune -f${NC}"
+            docker system df 2>/dev/null || true
+        else
+            docker system prune -f 2>/dev/null || true
+            docker builder prune -f 2>/dev/null || true
+        fi
+    else
+        print_item "✕" "${YELLOW}" "Docker not found. Skipping."
+    fi
+}
+
+cleanup_rust() {
+    if [ -d "$HOME/.cargo" ]; then
+        print_item "✓" "${GREEN}" "Cleaning Rust/Cargo caches..."
+        safe_rm -rf ~/.cargo/registry/cache/
+        safe_rm -rf ~/.cargo/registry/src/
+        safe_rm -rf ~/.cargo/git/checkouts/
+    else
+        print_item "✕" "${YELLOW}" "Cargo directory not found. Skipping."
+    fi
+}
+
+cleanup_python() {
+    if command -v pip3 &> /dev/null; then
+        print_item "✓" "${GREEN}" "Cleaning pip cache..."
+        if $DRY_RUN; then
+            echo -e "${YELLOW}[DRY-RUN] Would run: pip3 cache purge${NC}"
+        else
+            pip3 cache purge 2>/dev/null || true
+        fi
+    elif command -v pip &> /dev/null; then
+        print_item "✓" "${GREEN}" "Cleaning pip cache..."
+        if $DRY_RUN; then
+            echo -e "${YELLOW}[DRY-RUN] Would run: pip cache purge${NC}"
+        else
+            pip cache purge 2>/dev/null || true
+        fi
+    else
+        print_item "✕" "${YELLOW}" "pip not found. Skipping."
+    fi
+    # Clean __pycache__ and .pyc in home directory (shallow)
+    if [ -d "$HOME/.cache/pip" ]; then
+        print_item "✓" "${GREEN}" "Removing pip HTTP cache..."
+        safe_rm -rf ~/.cache/pip/
+    fi
+}
+
+check_storage() {
+    print_section_header "Storage Usage Report"
+
+    echo -e "${CYAN}📱 iOS Backups:${NC}"
+    du -sh ~/Library/Application\ Support/MobileSync/Backup 2>/dev/null || echo "  None found"
+    echo ""
+
+    echo -e "${CYAN}🐳 Docker Storage:${NC}"
+    docker system df 2>/dev/null || echo "  Docker not installed"
+    echo ""
+
+    echo -e "${CYAN}⏰ Time Machine Local Snapshots:${NC}"
+    tmutil listlocalsnapshots / 2>/dev/null | wc -l | xargs echo "  Snapshots count:"
+    echo ""
+
+    echo -e "${CYAN}📧 Mail Data:${NC}"
+    du -sh ~/Library/Mail 2>/dev/null || echo "  None found"
+    du -sh ~/Library/Mail\ Downloads 2>/dev/null || echo "  None found"
+    echo ""
+
+    echo -e "${CYAN}💿 macOS Installers:${NC}"
+    du -sh /Applications/Install\ macOS*.app 2>/dev/null || echo "  None found"
+    du -sh ~/Library/Updates 2>/dev/null || echo "  None found"
+    echo ""
+
+    echo -e "${CYAN}🎵 Spotify Cache:${NC}"
+    du -sh ~/Library/Caches/com.spotify.client 2>/dev/null || echo "  None found"
+    echo ""
+
+    echo -e "${CYAN}📦 Largest directories in ~/Library:${NC}"
+    du -sh ~/Library/* 2>/dev/null | sort -hr | head -10
 }
 
 cleanup_timemachine_snapshots() {
@@ -554,8 +687,12 @@ display_menu() {
     echo -e "${GREEN}12.${NC} Clean Android SDK (old build-tools, x86 images)"
     echo -e "${GREEN}13.${NC} Clean App Containers (Slack, Teams, Discord, Spotify, WhatsApp)"
     echo -e "${GREEN}14.${NC} Remove Time Machine Local Snapshots (requires sudo)"
+    echo -e "${GREEN}15.${NC} Clean Docker (system prune, builder prune)"
+    echo -e "${GREEN}16.${NC} Clean Rust/Cargo Caches"
+    echo -e "${GREEN}17.${NC} Clean Python/pip Caches"
+    echo -e "${GREEN}18.${NC} Check Storage Usage ${FAINT}(read-only report)${NC}"
     echo ""
-    echo -e "→ Please enter your choice (0-14): ${NC}\c"
+    echo -e "→ Please enter your choice (0-18): ${NC}\c"
 }
 
 # --- Help function ---
@@ -611,27 +748,30 @@ main_loop() {
                 ;;
             1)
                 print_section_header "Performing ALL Cleanup Tasks"
-                cleanup_xcode
-                cleanup_android
-                cleanup_android_sdk
-                cleanup_flutter "$FLUTTER_SEARCH_DIR"
-                cleanup_platformIO
-                cleanup_npm_yarn
-                cleanup_homebrew
-                cleanup_cocoapods
-                cleanup_ide_caches
-                cleanup_system_junk
-                cleanup_browser_caches
-                cleanup_app_containers
-                cleanup_timemachine_snapshots
+                run_with_space_tracking "Xcode" cleanup_xcode
+                run_with_space_tracking "Android/Gradle" cleanup_android
+                run_with_space_tracking "Android SDK" cleanup_android_sdk
+                run_with_space_tracking "Flutter" cleanup_flutter "$FLUTTER_SEARCH_DIR"
+                run_with_space_tracking "PlatformIO" cleanup_platformIO
+                run_with_space_tracking "npm/Yarn/pnpm" cleanup_npm_yarn
+                run_with_space_tracking "Homebrew" cleanup_homebrew
+                run_with_space_tracking "CocoaPods" cleanup_cocoapods
+                run_with_space_tracking "IDE Caches" cleanup_ide_caches
+                run_with_space_tracking "System Junk" cleanup_system_junk
+                run_with_space_tracking "Browser Caches" cleanup_browser_caches
+                run_with_space_tracking "App Containers" cleanup_app_containers
+                run_with_space_tracking "Time Machine" cleanup_timemachine_snapshots
+                run_with_space_tracking "Docker" cleanup_docker
+                run_with_space_tracking "Rust/Cargo" cleanup_rust
+                run_with_space_tracking "Python/pip" cleanup_python
                 ;;
             2)
                 print_section_header "Performing Xcode Cleanup"
-                cleanup_xcode
+                run_with_space_tracking "Xcode" cleanup_xcode
                 ;;
             3)
                 print_section_header "Performing Android/Gradle Cleanup"
-                cleanup_android
+                run_with_space_tracking "Android/Gradle" cleanup_android
                 ;;
             4)
                 print_section_header "Performing Flutter Cleanup"
@@ -680,46 +820,61 @@ main_loop() {
                 ;;
             5)
                 print_section_header "Performing npm/Yarn/pnpm Cleanup"
-                cleanup_npm_yarn
+                run_with_space_tracking "npm/Yarn/pnpm" cleanup_npm_yarn
                 ;;
             6)
                 print_section_header "Performing Homebrew Cleanup"
-                cleanup_homebrew
+                run_with_space_tracking "Homebrew" cleanup_homebrew
                 ;;
             7)
                 print_section_header "Performing CocoaPods Cleanup"
-                cleanup_cocoapods
+                run_with_space_tracking "CocoaPods" cleanup_cocoapods
                 ;;
             8)
                 print_section_header "Performing IDE Caches Cleanup"
-                cleanup_ide_caches
+                run_with_space_tracking "IDE Caches" cleanup_ide_caches
                 ;;
             9)
                 print_section_header "Performing System Junk & Logs Cleanup"
-                cleanup_system_junk
+                run_with_space_tracking "System Junk" cleanup_system_junk
                 ;;
             10)
                 print_section_header "Performing Browser Caches Cleanup"
-                cleanup_browser_caches
+                run_with_space_tracking "Browser Caches" cleanup_browser_caches
                 ;;
             11)
                 print_section_header "Performing PlatformIO Caches cleanup"
-                cleanup_platformIO
+                run_with_space_tracking "PlatformIO" cleanup_platformIO
                 ;;
             12)
                 print_section_header "Performing Android SDK Cleanup"
-                cleanup_android_sdk
+                run_with_space_tracking "Android SDK" cleanup_android_sdk
                 ;;
             13)
                 print_section_header "Performing App Containers Cleanup"
-                cleanup_app_containers
+                run_with_space_tracking "App Containers" cleanup_app_containers
                 ;;
             14)
                 print_section_header "Performing Time Machine Snapshots Cleanup"
-                cleanup_timemachine_snapshots
+                run_with_space_tracking "Time Machine" cleanup_timemachine_snapshots
+                ;;
+            15)
+                print_section_header "Performing Docker Cleanup"
+                run_with_space_tracking "Docker" cleanup_docker
+                ;;
+            16)
+                print_section_header "Performing Rust/Cargo Cleanup"
+                run_with_space_tracking "Rust/Cargo" cleanup_rust
+                ;;
+            17)
+                print_section_header "Performing Python/pip Cleanup"
+                run_with_space_tracking "Python/pip" cleanup_python
+                ;;
+            18)
+                check_storage
                 ;;
             *)
-                echo -e "${RED}Invalid choice. Please enter a number between 0 and 14.${NC}"
+                echo -e "${RED}Invalid choice. Please enter a number between 0 and 18.${NC}"
                 sleep 2
                 ;;
         esac
